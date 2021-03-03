@@ -1,3 +1,4 @@
+
 #
 # pip3 install --user pytest
 #
@@ -20,19 +21,25 @@ import os
 from sys import argv, stderr, stdout
 from glob import glob
 from time import sleep
-from shutil import copytree, rmtree
+from shutil import Error, copytree, rmtree
 from signal import SIGKILL, SIGTERM
 from hashlib import md5
+from typing import Generator, List
 from unittest import TestCase, skip
 from itertools import chain
 from subprocess import Popen, TimeoutExpired
 from os import environ, getpgid, killpg, mkdir, remove, setsid, walk
-from os.path import exists, getsize, isfile, join, normpath, sep
+from os.path import exists, getsize, isfile, join, normpath, sep, split
+
+import Client
+import Server
 
 
 ASSERT_TIMEOUT = 20.0
 ASSERT_STEP = 1.0
 SHUTDOWN_TIMEOUT = 10.0
+HEADER_SIZE = 10
+PORT = 1234+3
 
 SERVER_PATH = '/tmp/dropbox/server'
 CLIENT_PATH = '/tmp/dropbox/client'
@@ -74,7 +81,7 @@ def get_md5(filename):
     return hash_md5.hexdigest()
 
 
-def path_content_to_string(path):
+def path_content_to_hash(path) -> str:
     """Convert contents of a directory recursively into a string for easier comparison."""
     lines = []
     prefix_len = len(path + sep)
@@ -101,11 +108,47 @@ def path_content_to_string(path):
     return '\n'.join(lines)
 
 
+# def path_content_to_updates(path, new_state, old_state) -> List:
+#     """Convert contents of a directory recursively into a string for sending"""
+#     # Finding updates
+#     # changed or new files
+#     new_set = set(new_state)
+#     old_set = set(old_state)
+#     updates = new_set - old_set
+#     r = [(
+#         update[0],
+#         update[1],
+#         update[2],
+#         open(f"{path}/{update[0]}", "r").read()
+#     ) for update in updates]
+
+#     # removed files
+#     old_paths = {val[0]: val for val in old_set}
+#     new_paths = {val[0]: val for val in new_set}
+
+#     return sorted(r + [(path, old_paths[path][1], -1, "") for path in old_paths if path not in new_paths])
+
+
+def update_path_content(updates, path: str = SERVER_PATH):
+    for update in updates:
+        # is size -1 rm
+        if update[2] == -1:
+            if update[1] == "dir":
+                rmtree(f"{path}/{update[0]}")
+            else:
+                os.remove(f"{path}/{update[0]}")
+        else:
+            if update[1] == "file":
+                spit(f"{path}/{update[0]}", update[3])
+            else:  # == dir
+                os.makedirs(f"{path}/{update[0]}")
+
+
 def assert_paths_in_sync(path1, path2, timeout=ASSERT_TIMEOUT, step=ASSERT_STEP):
     current_time = 0
     while current_time < timeout:
-        contents1 = path_content_to_string(path1)
-        contents2 = path_content_to_string(path2)
+        contents1 = path_content_to_hash(path1)
+        contents2 = path_content_to_hash(path2)
         if contents1 == contents2:
             return
         sleep(step)
@@ -113,38 +156,31 @@ def assert_paths_in_sync(path1, path2, timeout=ASSERT_TIMEOUT, step=ASSERT_STEP)
     assert contents1 == contents2
 
 
-# def client():
-#     """Dumbest reference implementation of a client that copies files recursively."""
-#     # Showing information
-#     print(f"Client PID: ")
-#     print(f'CLIENT STARTED: PID: {os.getpid()}, argv: {argv}')
-#     client_path = argv[-2]
-#     server_path = argv[-1]
-#     sync_paths(client_path, server_path)
-#     while True:
-#         # if difference.
-#         if path_content_to_string(client_path) != path_content_to_string(server_path):
-#             print('Client syncing...')
-#             sync_paths(client_path, server_path)
-#         print('Client sleeping 1 second')
-#         sleep(1.0)
-#     print('CLIENT DONE', argv)
-
-
 def client():
     """Dumbest reference implementation of a client that copies files recursively."""
     # Showing information
-    print(f"Client PID: ")
     print(f'CLIENT STARTED: PID: {os.getpid()}, argv: {argv}')
-    client_path = argv[-2]
-    server_path = argv[-1]
-    client_dir_hash = get_md5(client_path)
-    sync_paths(client_path, server_path)
+    client_path = CLIENT_PATH
+    c = Client.Client(port=PORT, header_size=HEADER_SIZE)
+    c.start()
+
+    current_state = path_content_to_hash(client_path)
+    # Sending initial state
+    print("Sending Original state")
+    c.send(path_content_to_updates(
+        client_path, current_state, []))
+
     while True:
+        new_state = path_content_to_hash(client_path)
         # if difference.
-        if path_content_to_string(client_path) != path_content_to_string(server_path):
+        if new_state != current_state:
             print('Client syncing...')
-            sync_paths(client_path, server_path)
+            u = path_content_to_updates(client_path, new_state, current_state)
+            print("updates: ")
+            print(u)
+            c.send(u)
+            current_state = new_state
+
         print('Client sleeping 1 second')
         sleep(1.0)
     print('CLIENT DONE', argv)
@@ -153,7 +189,27 @@ def client():
 def server():
     """Server reference implementation, does nothing, just for demo purposes."""
     print(f'SERVER STARTED: PID: {os.getpid()}, argv: {argv}',)
+    c = Server.Server(
+        header_length=HEADER_SIZE,
+        port=PORT
+    )
+    updates = c.start()
+    # Initialize server folder
+    update_path_content(next(updates)["data"])
+    # Only updates
+    # for update in c.start():
     while True:
+        update = next(updates)
+        if not update["data"]:
+            continue
+        print("Server updating")
+
+        u = update["data"]
+        print("Updating")
+        for update in u:
+            print(f"{update}")
+        update_path_content(u)
+
         print('Server sleeping 1 second')
         sleep(1.0)
     print('SERVER DONE', argv)
