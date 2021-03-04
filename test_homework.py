@@ -17,29 +17,28 @@
 # Verbose, with stdout, show summary in the end
 # pytest -s -vv -q -rapP
 #
-import os
 from sys import argv, stderr, stdout
 from glob import glob
 from time import sleep
 from shutil import Error, copytree, rmtree
 from signal import SIGKILL, SIGTERM
 from hashlib import md5
-from typing import Generator, List
+from typing import List, Tuple
 from unittest import TestCase, skip
 from itertools import chain
 from subprocess import Popen, TimeoutExpired
 from os import environ, getpgid, killpg, mkdir, remove, setsid, walk
 from os.path import exists, getsize, isfile, join, normpath, sep, split
 
-import Client
-import Server
+from Client import DropboxClient
+from Server import DropboxServer
 
 
 ASSERT_TIMEOUT = 20.0
 ASSERT_STEP = 1.0
 SHUTDOWN_TIMEOUT = 10.0
 HEADER_SIZE = 10
-PORT = 1234+3
+PORT = 1234+24
 
 SERVER_PATH = '/tmp/dropbox/server'
 CLIENT_PATH = '/tmp/dropbox/client'
@@ -81,8 +80,7 @@ def get_md5(filename):
     return hash_md5.hexdigest()
 
 
-def path_content_to_hash(path) -> str:
-    """Convert contents of a directory recursively into a string for easier comparison."""
+def path_to_hashed_tuples(path) -> List[Tuple]:
     lines = []
     prefix_len = len(path + sep)
     for root, dirs, files in walk(path):
@@ -92,7 +90,7 @@ def path_content_to_hash(path) -> str:
             size = 0
             type_ = 'dir'
             hash_ = '0'
-            line = '{},{},{},{}'.format(relative_path, type_, size, hash_)
+            line = (relative_path, type_, size, hash_)
             lines.append(line)
 
         for filename in files:
@@ -101,47 +99,25 @@ def path_content_to_hash(path) -> str:
             size = getsize(full_path)
             type_ = 'file' if isfile(full_path) else 'dir'
             hash_ = get_md5(full_path)
-            line = '{},{},{},{}'.format(relative_path, type_, size, hash_)
+            line = (relative_path, type_, size, hash_)
             lines.append(line)
 
-    lines = sorted(lines)
-    return '\n'.join(lines)
+    return sorted(lines)
 
 
-# def path_content_to_updates(path, new_state, old_state) -> List:
-#     """Convert contents of a directory recursively into a string for sending"""
-#     # Finding updates
-#     # changed or new files
-#     new_set = set(new_state)
-#     old_set = set(old_state)
-#     updates = new_set - old_set
-#     r = [(
-#         update[0],
-#         update[1],
-#         update[2],
-#         open(f"{path}/{update[0]}", "r").read()
-#     ) for update in updates]
+def path_content_to_hash(path) -> str:
+    """
+    Convert contents of a directory into a string for easier comparison.
+    Using path_to_hashed_tuples and joins to a string.
 
-#     # removed files
-#     old_paths = {val[0]: val for val in old_set}
-#     new_paths = {val[0]: val for val in new_set}
+    Was called path_content_to_string 
+    """
+    #
 
-#     return sorted(r + [(path, old_paths[path][1], -1, "") for path in old_paths if path not in new_paths])
-
-
-def update_path_content(updates, path: str = SERVER_PATH):
-    for update in updates:
-        # is size -1 rm
-        if update[2] == -1:
-            if update[1] == "dir":
-                rmtree(f"{path}/{update[0]}")
-            else:
-                os.remove(f"{path}/{update[0]}")
-        else:
-            if update[1] == "file":
-                spit(f"{path}/{update[0]}", update[3])
-            else:  # == dir
-                os.makedirs(f"{path}/{update[0]}")
+    return '\n'.join(  # Join all values of the list from path_to_hashed_tuples with new lines
+        [",".join(str(x) for x in line)  # Join all the values from the tuples per line inside the list with commas.
+         for line in path_to_hashed_tuples(path)]
+    )
 
 
 def assert_paths_in_sync(path1, path2, timeout=ASSERT_TIMEOUT, step=ASSERT_STEP):
@@ -157,61 +133,18 @@ def assert_paths_in_sync(path1, path2, timeout=ASSERT_TIMEOUT, step=ASSERT_STEP)
 
 
 def client():
-    """Dumbest reference implementation of a client that copies files recursively."""
-    # Showing information
-    print(f'CLIENT STARTED: PID: {os.getpid()}, argv: {argv}')
-    client_path = CLIENT_PATH
-    c = Client.Client(port=PORT, header_size=HEADER_SIZE)
+    """Starting a client, implemented in Client.py"""
+    c = DropboxClient(port=PORT, header_length=HEADER_SIZE, path=CLIENT_PATH)
+    # Starting client server. Note: Infinite loop
     c.start()
-
-    current_state = path_content_to_hash(client_path)
-    # Sending initial state
-    print("Sending Original state")
-    c.send(path_content_to_updates(
-        client_path, current_state, []))
-
-    while True:
-        new_state = path_content_to_hash(client_path)
-        # if difference.
-        if new_state != current_state:
-            print('Client syncing...')
-            u = path_content_to_updates(client_path, new_state, current_state)
-            print("updates: ")
-            print(u)
-            c.send(u)
-            current_state = new_state
-
-        print('Client sleeping 1 second')
-        sleep(1.0)
     print('CLIENT DONE', argv)
 
 
 def server():
-    """Server reference implementation, does nothing, just for demo purposes."""
-    print(f'SERVER STARTED: PID: {os.getpid()}, argv: {argv}',)
-    c = Server.Server(
-        header_length=HEADER_SIZE,
-        port=PORT
-    )
-    updates = c.start()
-    # Initialize server folder
-    update_path_content(next(updates)["data"])
-    # Only updates
-    # for update in c.start():
-    while True:
-        update = next(updates)
-        if not update["data"]:
-            continue
-        print("Server updating")
-
-        u = update["data"]
-        print("Updating")
-        for update in u:
-            print(f"{update}")
-        update_path_content(u)
-
-        print('Server sleeping 1 second')
-        sleep(1.0)
+    """Starting the server implemented in Server.py"""
+    s = DropboxServer(port=PORT, header_length=HEADER_SIZE, path=SERVER_PATH)
+    # Starting server. Note: Getting yields from client, so infinite.
+    s.start()
     print('SERVER DONE', argv)
 
 
