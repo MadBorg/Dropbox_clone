@@ -47,6 +47,33 @@ Both the client and server contains two classes, one for handling the sending an
 * Start: Starts the server, and uses the yields from the Server in a for loop, and because of this, it is a infinite for loop. The loop is pausing until a yield from the server and then it uses the update path method to update the Server directory. If no data is received it tries to start over the server. For then to print the path of all directories and files updated.
 * Update path realizes the updates from the messages. Overwrites changed files, and removes what is to be removed.
 
+## Improvements
+
+### Error handling
+
+The code now is quite strict, and does not handle many possible errors. This is important for a client facing product since they cant be expected to figure out what went wrong.
+
+### Logging
+
+Logging is useful for seeing that the program is running as expected. In this project logging could be added to log which files and dirs was changed on the client and server side. This could be used to find desync errors, and allows for a resync function to fix the error on trigger.
+
+Logging is also important for monitoring performance. It can often be hard to spot bottlenecks and other problems whiteout logging with timestamps.
+
+Tools to help with logging:
+  * pythons logger lib.
+  * DataDog
+
+### Change only the differences in files not the whole file.
+
+To save on compute and bandwidth it would be better to send only the updates in the files instead of sending the whole files. 
+
+### Async
+
+There is many possibilities with async compute in this project. For example the receiving updates and actually updating does not need to be in sync. We can simply have the receiver method put all updates into a stack which the updates grabs from. This will allow for many smaller bursts of updates to come in at the same time. Although this can be said to be handled by the sockets listening que.
+
+The infinite loops could be handles by their own treads to more gracefully shut down the servers. 
+
+
 ## Dependencies
 
 Can be installed with:
