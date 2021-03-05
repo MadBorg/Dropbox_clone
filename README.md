@@ -1,10 +1,60 @@
+# Dropbox clone
 
-## Dev
+Ths is mainly a python sockets project. It keeps one directory in sync while the other is changed. The code has 3 parts; one for testing and running: test_homework.py, one for the client: Client.py, and one for the Server: Server.py
 
-Python 3.8.5
+## Code
 
-Requirements built with
+### test_homework
+
+This file contains common code used by both the client and the server, and the code for running the client and server. IT also contains tests for the code.
+
+All the tests and most of the common code was provided. I have changed the path_content_to_string to path_content_to_hash, and extracted the main for loop to a different function called path_to_hashed_tuples. This is so that i can compare individual files and not only the whole state. This allows me to only send the updated files.
+
+I also changed the Client and Server functions to use my new classes, which uses sockets to communicate to not rely on the fact that both the client and server has access to the both directories.
+
+
+### Client
+
+Both the client and server contains two classes, one for handling the sending and receiving og data, and a class using the other class.
+
+#### client class methods
+
+* constructor: starts a socket object.
+* start: connects to the server, with the given hostname and path.
+* send: sends messages, first a header telling how big the msg is, then the actual data. The data is pickled before it is sent, to convert it to bytes, and for easy decoding on the receiving side.
+
+#### DropboxClient class methods:
+
+* constructor: starts a client object, and gets the initial state of the client directory.
+* start:
+  1. Send all data from directory
+  2. Infinite loop: If state changed send the updates, else sleep a second.
+* get_new_state: Getting the hashed state list. This is used for comparing the states, and used by the get_updates method, to find the updates.
+* get_updates: Uses the new and old state to find which files and directories are updated with a set diff. Then for all the updates it reads the file if its a file, and if dir gives the tuple from the new state. Then all the file which are removed are added, with size -1 amd an empty string as content.
+
+### Server
+
+#### Server class methods
+
+* Constructor: Sets up the socket, and adds needed settings. Binds the socket to the hostname and port, then adds a listening que.
+* Start: Infinite loop. Accepts a client and accepts messages from the client with the receive_msg method, and yields the message.
+* _receive_msg: receives the header and the message, then decodes the pickled data and returns. This function blocks until a message is received.
+  
+
+#### DropboxServer
+
+* Constructor: Starts a Server object.
+* Start: Starts the server, and uses the yields from the Server in a for loop, and because of this, it is a infinite for loop. The loop is pausing until a yield from the server and then it uses the update path method to update the Server directory. If no data is received it tries to start over the server. For then to print the path of all directories and files updated.
+* Update path realizes the updates from the messages. Overwrites changed files, and removes what is to be removed.
+
+## Dependencies
+
+Can be installed with:
 
 ```shell
-$ pip freeze >> requirements.txt
+$ pip -r install requirements.txt
 ```
+
+The code was developed with python 3.8.5
+
+
