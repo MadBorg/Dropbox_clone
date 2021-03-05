@@ -81,6 +81,7 @@ def get_md5(filename):
 
 
 def path_to_hashed_tuples(path) -> List[Tuple]:
+    """Getting the state of path in a list of tuples, conaining the sate of each file and dir."""
     lines = []
     prefix_len = len(path + sep)
     for root, dirs, files in walk(path):

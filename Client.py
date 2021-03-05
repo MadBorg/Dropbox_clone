@@ -76,9 +76,6 @@ class DropboxClient:
                 time.sleep(1)
             print("Client sleeping 1 second.")
 
-    def get_new_state_string(self):
-        return test_homework.path_content_to_hash(self.path)
-
     def get_new_state(self) -> List[Tuple]:
         return test_homework.path_to_hashed_tuples(self.path)
 
